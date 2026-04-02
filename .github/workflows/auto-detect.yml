@@ -70,15 +70,19 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: 'npm'
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install dependencies (CI safe)
+        run: npm ci
+
+      - name: Fix native modules (Tailwind/Vite issue)
+        run: npm rebuild
 
       - name: Debug project
         run: |
-          echo "Listing files..."
+          echo "Files:"
           ls -la
-          echo "Showing package.json..."
+          echo "package.json:"
           cat package.json
 
       - name: Run build (if exists)
@@ -86,7 +90,7 @@ jobs:
           if npm run | grep -q "build"; then
             npm run build
           else
-            echo "No build script found, skipping build"
+            echo "No build script found, skipping"
           fi
 
       - name: Run app (optional)
@@ -95,7 +99,7 @@ jobs:
             npm start &
             sleep 5
           else
-            echo "No start script found, skipping run"
+            echo "No start script found, skipping"
           fi
 
   html-job:
