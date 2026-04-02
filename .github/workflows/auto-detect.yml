@@ -1,5 +1,4 @@
 name: Auto Detect & Run
-
 on:
   push:
     branches: [ "main" ]
@@ -12,7 +11,6 @@ jobs:
       python: ${{ steps.detect.outputs.python }}
       node: ${{ steps.detect.outputs.node }}
       html: ${{ steps.detect.outputs.html }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -24,17 +22,14 @@ jobs:
           echo "node=false" >> $GITHUB_OUTPUT
           echo "html=false" >> $GITHUB_OUTPUT
 
-          # Python detection
           if [ -f "requirements.txt" ]; then
             echo "python=true" >> $GITHUB_OUTPUT
           fi
 
-          # Node detection (priority)
           if [ -f "package.json" ]; then
             echo "node=true" >> $GITHUB_OUTPUT
           fi
 
-          # HTML only if Node not present
           if ls *.html 1> /dev/null 2>&1 && [ ! -f "package.json" ]; then
             echo "html=true" >> $GITHUB_OUTPUT
           fi
@@ -43,7 +38,6 @@ jobs:
     needs: detect
     if: needs.detect.outputs.python == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -62,34 +56,45 @@ jobs:
     needs: detect
     if: needs.detect.outputs.node == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
-      # 🔥 FIX FOR TAILWIND / VITE ISSUE
       - name: Clean old dependencies
         run: |
           rm -rf node_modules
           rm -f package-lock.json
+          rm -f package-shrinkwrap.json
 
-      - name: Install dependencies (fix native binding issue)
-        run: npm install --include=optional
+      - name: Install dependencies
+        run: |
+          npm install \
+            --prefer-offline=false \
+            --include=optional \
+            --ignore-scripts=false
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
+          npm_config_optional: "true"
+          npm_config_ignore_scripts: "false"
 
       - name: Rebuild native modules
-        run: npm rebuild
+        run: |
+          npm rebuild @tailwindcss/oxide --update-binary || \
+          npm install @tailwindcss/oxide --prefer-offline=false
 
-      # Debug (optional but useful)
       - name: Debug project
         run: |
-          echo "Files:"
+          echo "=== Directory Structure ==="
           ls -la
-          echo "package.json:"
+          echo "=== package.json ==="
           cat package.json
+          echo "=== Node & NPM versions ==="
+          node -v
+          npm -v
 
       - name: Run build (if exists)
         run: |
@@ -112,7 +117,6 @@ jobs:
     needs: detect
     if: needs.detect.outputs.html == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
