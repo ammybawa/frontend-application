@@ -1,4 +1,4 @@
-name: Auto Detect & Run
+name: Auto Detect, Build & Deploy
 on:
   push:
     branches: [ "main" ]
@@ -34,6 +34,9 @@ jobs:
             echo "html=true" >> $GITHUB_OUTPUT
           fi
 
+  # ───────────────────────────────────────────
+  # PYTHON JOB
+  # ───────────────────────────────────────────
   python-job:
     needs: detect
     if: needs.detect.outputs.python == 'true'
@@ -52,6 +55,9 @@ jobs:
       - name: Run Python app
         run: python main.py
 
+  # ───────────────────────────────────────────
+  # NODE JOB
+  # ───────────────────────────────────────────
   node-job:
     needs: detect
     if: needs.detect.outputs.node == 'true'
@@ -113,6 +119,16 @@ jobs:
             echo "No start script found, skipping"
           fi
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+          if-no-files-found: warn
+
+  # ───────────────────────────────────────────
+  # HTML JOB
+  # ───────────────────────────────────────────
   html-job:
     needs: detect
     if: needs.detect.outputs.html == 'true'
@@ -124,3 +140,88 @@ jobs:
         run: |
           echo "Static HTML project"
           ls -la
+
+      - name: Upload HTML artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: .
+          if-no-files-found: warn
+
+  # ───────────────────────────────────────────
+  # DEPLOY JOB (only on push to main)
+  # ───────────────────────────────────────────
+  deploy:
+    needs: [detect, node-job]
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.detect.outputs.node == 'true' &&
+      needs.node-job.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output
+          path: dist/
+
+      - name: Verify build files
+        run: |
+          echo "=== Build files to deploy ==="
+          ls -la dist/
+
+      - name: Copy build files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "dist/"
+          target: "/var/www/your-app"      # 👈 change to your server path
+          rm: true                          # removes old files before uploading
+
+      - name: Restart server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "=== Deployment started ==="
+
+            # Navigate to app directory
+            cd /var/www/your-app           # 👈 change to your server path
+
+            # Show deployed files
+            echo "=== Deployed files ==="
+            ls -la
+
+            # ── Choose ONE based on your server setup ──
+
+            # Option 1: Nginx (static site) ✅
+            sudo systemctl reload nginx
+            echo "Nginx reloaded successfully"
+
+            # Option 2: PM2 (Node app) — uncomment if needed
+            # pm2 restart your-app-name
+            # pm2 save
+
+            # Option 3: Apache — uncomment if needed
+            # sudo systemctl reload apache2
+
+            echo "=== Deployment complete ==="
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment successful!"
+          else
+            echo "❌ Deployment failed!"
+          fi
+```
+
