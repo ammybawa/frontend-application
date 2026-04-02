@@ -1,5 +1,4 @@
 name: Auto Detect, Build & Deploy
-
 on:
   push:
     branches: [ "main" ]
@@ -12,7 +11,6 @@ jobs:
       python: ${{ steps.detect.outputs.python }}
       node: ${{ steps.detect.outputs.node }}
       html: ${{ steps.detect.outputs.html }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,12 +34,13 @@ jobs:
             echo "html=true" >> $GITHUB_OUTPUT
           fi
 
-  # ───────── PYTHON ─────────
+  # ───────────────────────────────────────────
+  # PYTHON JOB
+  # ───────────────────────────────────────────
   python-job:
     needs: detect
     if: needs.detect.outputs.python == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -50,15 +49,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      - run: pip install -r requirements.txt
-      - run: python main.py
+      - name: Install dependencies
+        run: pip install -r requirements.txt
 
-  # ───────── NODE ─────────
+      - name: Run Python app
+        run: python main.py
+
+  # ───────────────────────────────────────────
+  # NODE JOB
+  # ───────────────────────────────────────────
   node-job:
     needs: detect
     if: needs.detect.outputs.node == 'true'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -67,23 +70,53 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Clean dependencies
+      - name: Clean old dependencies
         run: |
           rm -rf node_modules
           rm -f package-lock.json
+          rm -f package-shrinkwrap.json
 
-      - name: Install dependencies (fix Tailwind issue)
-        run: npm install --include=optional --force
+      - name: Install dependencies
+        run: |
+          npm install \
+            --prefer-offline=false \
+            --include=optional \
+            --ignore-scripts=false
+        env:
+          SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
+          npm_config_optional: "true"
+          npm_config_ignore_scripts: "false"
 
       - name: Rebuild native modules
-        run: npm rebuild
+        run: |
+          npm rebuild @tailwindcss/oxide --update-binary || \
+          npm install @tailwindcss/oxide --prefer-offline=false
 
-      - name: Build project
+      - name: Debug project
+        run: |
+          echo "=== Directory Structure ==="
+          ls -la
+          echo "=== package.json ==="
+          cat package.json
+          echo "=== Node & NPM versions ==="
+          node -v
+          npm -v
+
+      - name: Run build (if exists)
         run: |
           if npm run | grep -q "build"; then
             npm run build
           else
-            echo "No build script found"
+            echo "No build script found, skipping"
+          fi
+
+      - name: Run app (optional)
+        run: |
+          if npm run | grep -q "start"; then
+            npm start &
+            sleep 5
+          else
+            echo "No start script found, skipping"
           fi
 
       - name: Upload build artifact
@@ -93,17 +126,40 @@ jobs:
           path: dist/
           if-no-files-found: warn
 
-  # ───────── DEPLOY ─────────
+  # ───────────────────────────────────────────
+  # HTML JOB
+  # ───────────────────────────────────────────
+  html-job:
+    needs: detect
+    if: needs.detect.outputs.html == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: HTML project detected
+        run: |
+          echo "Static HTML project"
+          ls -la
+
+      - name: Upload HTML artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: .
+          if-no-files-found: warn
+
+  # ───────────────────────────────────────────
+  # DEPLOY JOB (only on push to main)
+  # ───────────────────────────────────────────
   deploy:
     needs: [detect, node-job]
     if: |
+      always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.detect.outputs.node == 'true' &&
       needs.node-job.result == 'success'
-
     runs-on: ubuntu-latest
-
     steps:
       - name: Download build artifact
         uses: actions/download-artifact@v4
@@ -111,37 +167,55 @@ jobs:
           name: build-output
           path: dist/
 
-      - name: Verify files
-        run: ls -la dist/
+      - name: Verify build files
+        run: |
+          echo "=== Build files to deploy ==="
+          ls -la dist/
 
-      # 🔥 UPDATED: PASSWORD BASED SCP
       - name: Copy build files to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           source: "dist/"
-          target: "/var/www/html/fronted_zenDash_nextjs_application"
-          rm: true
+          target: /var/www/html/fronted_zenDash_nextjs_application      # 👈 change to your server path
+          rm: true                          # removes old files before uploading
 
-      # 🔥 UPDATED: PASSWORD BASED SSH
       - name: Restart server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
             echo "=== Deployment started ==="
-            cd /var/www/html/fronted_zenDash_nextjs_application
+
+            # Navigate to app directory
+            cd /var/www/html/fronted_zenDash_nextjs_application           # 👈 change to your server path
+
+            # Show deployed files
+            echo "=== Deployed files ==="
             ls -la
+
+            # ── Choose ONE based on your server setup ──
+
+            # Option 1: Nginx (static site) ✅
             sudo systemctl reload nginx
+            echo "Nginx reloaded successfully"
+
+            # Option 2: PM2 (Node app) — uncomment if needed
+            # pm2 restart your-app-name
+            # pm2 save
+
+            # Option 3: Apache — uncomment if needed
+            # sudo systemctl reload apache2
+
             echo "=== Deployment complete ==="
 
-      - name: Deployment status
+      - name: Notify deployment status
         if: always()
         run: |
           if [ "${{ job.status }}" == "success" ]; then
