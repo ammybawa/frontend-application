@@ -237,7 +237,9 @@ jobs:
           command_timeout: 15m
           source: "deploy/*"
           target: ${{ secrets.DEPLOY_PATH }}
-          rm: true
+          # rm: true fails if this user cannot delete the folder (e.g. owned by root/www-data)
+          rm: false
+          overwrite: true
 
       - name: Copy Python app to server
         if: needs.detect.outputs.python == 'true' && needs.detect.outputs.node != 'true' && needs.detect.outputs.html != 'true'
@@ -251,7 +253,8 @@ jobs:
           command_timeout: 15m
           source: "deploy/*"
           target: ${{ secrets.DEPLOY_PATH }}
-          rm: true
+          rm: false
+          overwrite: true
 
       - name: Remote commands after deploy
         uses: appleboy/ssh-action@v1.0.3
