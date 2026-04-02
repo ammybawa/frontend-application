@@ -223,5 +223,3 @@ jobs:
           else
             echo "❌ Deployment failed!"
           fi
-```
-
