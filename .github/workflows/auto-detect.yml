@@ -180,7 +180,7 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           source: "dist/"
-          target: "/var/www/your-app"      # 👈 change to your server path
+          target: "/var/www/html/fronted_zenDash_nextjs_application"      # 👈 change to your server path
           rm: true                          # removes old files before uploading
 
       - name: Restart server
@@ -194,7 +194,7 @@ jobs:
             echo "=== Deployment started ==="
 
             # Navigate to app directory
-            cd /var/www/your-app           # 👈 change to your server path
+            cd /var/www/html/fronted_zenDash_nextjs_application           # 👈 change to your server path
 
             # Show deployed files
             echo "=== Deployed files ==="
