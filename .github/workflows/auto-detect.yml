@@ -24,15 +24,18 @@ jobs:
           echo "node=false" >> $GITHUB_OUTPUT
           echo "html=false" >> $GITHUB_OUTPUT
 
+          # Detect Python
           if [ -f "requirements.txt" ]; then
             echo "python=true" >> $GITHUB_OUTPUT
           fi
 
+          # Detect Node (priority)
           if [ -f "package.json" ]; then
             echo "node=true" >> $GITHUB_OUTPUT
           fi
 
-          if ls *.html 1> /dev/null 2>&1; then
+          # Detect HTML ONLY if Node is NOT present
+          if ls *.html 1> /dev/null 2>&1 && [ ! -f "package.json" ]; then
             echo "html=true" >> $GITHUB_OUTPUT
           fi
 
@@ -44,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -52,7 +55,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Python script
+      - name: Run Python app
         run: python main.py
 
   node-job:
@@ -63,7 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '18'
@@ -71,8 +74,29 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Run app
-        run: npm run build
+      - name: Debug project
+        run: |
+          echo "Listing files..."
+          ls -la
+          echo "Showing package.json..."
+          cat package.json
+
+      - name: Run build (if exists)
+        run: |
+          if npm run | grep -q "build"; then
+            npm run build
+          else
+            echo "No build script found, skipping build"
+          fi
+
+      - name: Run app (optional)
+        run: |
+          if npm run | grep -q "start"; then
+            npm start &
+            sleep 5
+          else
+            echo "No start script found, skipping run"
+          fi
 
   html-job:
     needs: detect
@@ -82,7 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate HTML
+      - name: HTML project detected
         run: |
-          echo "HTML project detected"
+          echo "Static HTML project"
           ls -la
