@@ -13,8 +13,6 @@ permissions:
   contents: read
 
 env:
-  # Single place to change server deploy path (must match SSH script below)
-  DEPLOY_PATH: /var/www/html/fronted_zenDash_nextjs_application
   # Quieter Node 20 deprecation warnings until artifact actions default to Node 24
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -238,7 +236,7 @@ jobs:
           timeout: 2m
           command_timeout: 15m
           source: "deploy/*"
-          target: ${{ env.DEPLOY_PATH }}
+          target: ${{ secrets.DEPLOY_PATH }}
           rm: true
 
       - name: Copy Python app to server
@@ -252,7 +250,7 @@ jobs:
           timeout: 2m
           command_timeout: 15m
           source: "deploy/*"
-          target: ${{ env.DEPLOY_PATH }}
+          target: ${{ secrets.DEPLOY_PATH }}
           rm: true
 
       - name: Remote commands after deploy
@@ -267,7 +265,7 @@ jobs:
           script: |
             set -e
             echo "=== Deployment ==="
-            cd "${{ env.DEPLOY_PATH }}"
+            cd "${{ secrets.DEPLOY_PATH }}"
             ls -la
 
             if [ "${{ needs.detect.outputs.python }}" = "true" ] && [ "${{ needs.detect.outputs.node }}" != "true" ] && [ "${{ needs.detect.outputs.html }}" != "true" ]; then
