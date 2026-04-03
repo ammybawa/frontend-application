@@ -204,7 +204,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-build
-          path: deploy/
+          path: dist/
 
       - name: Download HTML artifact
         if: needs.detect.outputs.html == 'true' && needs.detect.outputs.node != 'true'
