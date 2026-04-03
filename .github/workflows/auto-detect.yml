@@ -204,7 +204,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-build
-          path: dist/
+          path: deploy/
 
       - name: Download HTML artifact
         if: needs.detect.outputs.html == 'true' && needs.detect.outputs.node != 'true'
@@ -223,7 +223,18 @@ jobs:
       - name: Verify deploy files
         run: |
           echo "=== Files to deploy ==="
-          ls -laR deploy/ || true
+          ls -laR deploy/ 2>/dev/null || true
+
+      - name: Ensure deploy/ is not empty before SCP
+        if: |
+          needs.detect.outputs.node == 'true' || needs.detect.outputs.html == 'true' ||
+          (needs.detect.outputs.python == 'true' && needs.detect.outputs.node != 'true' && needs.detect.outputs.html != 'true')
+        run: |
+          if [ ! -d deploy ] || [ -z "$(ls -A deploy 2>/dev/null)" ]; then
+            echo "::error::deploy/ is missing or empty (nothing to upload). Check build output and artifact download path."
+            ls -la
+            exit 1
+          fi
 
       - name: Copy files to server (Node / HTML static)
         if: needs.detect.outputs.node == 'true' || needs.detect.outputs.html == 'true'
