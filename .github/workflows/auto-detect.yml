@@ -199,45 +199,31 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
-      # Use dist/ here to match Vite output name; do not use "deploy" or SCP will create deploy/ on the server
       - name: Download Node artifact
         if: needs.detect.outputs.node == 'true'
         uses: actions/download-artifact@v4
         with:
           name: node-build
-          path: dist/
+          path: deploy/
 
       - name: Download HTML artifact
         if: needs.detect.outputs.html == 'true' && needs.detect.outputs.node != 'true'
         uses: actions/download-artifact@v4
         with:
           name: html-build
-          path: dist/
+          path: deploy/
 
       - name: Download Python artifact
         if: needs.detect.outputs.python == 'true' && needs.detect.outputs.node != 'true' && needs.detect.outputs.html != 'true'
         uses: actions/download-artifact@v4
         with:
           name: python-build
-          path: dist/
+          path: deploy/
 
       - name: Verify deploy files
         run: |
           echo "=== Files to deploy ==="
-          ls -laR dist/ || true
-
-      # Put built files in <DEPLOY_PATH>/dist so they are not mixed with repo root (src/, package.json, etc.)
-      - name: Ensure dist directory exists on server
-        if: needs.detect.outputs.node == 'true' || needs.detect.outputs.html == 'true'
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          password: ${{ secrets.SSH_PASSWORD }}
-          port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
-          timeout: 2m
-          command_timeout: 2m
-          script: mkdir -p "${{ secrets.DEPLOY_PATH }}/dist"
+          ls -laR deploy/ || true
 
       - name: Copy files to server (Node / HTML static)
         if: needs.detect.outputs.node == 'true' || needs.detect.outputs.html == 'true'
@@ -249,9 +235,8 @@ jobs:
           port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
           timeout: 2m
           command_timeout: 15m
-          source: "dist/*"
-          target: ${{ secrets.DEPLOY_PATH }}/dist
-          strip_components: 1
+          source: "deploy/*"
+          target: ${{ secrets.DEPLOY_PATH }}
           rm: false
           overwrite: true
 
@@ -265,7 +250,7 @@ jobs:
           port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
           timeout: 2m
           command_timeout: 15m
-          source: "dist/*"
+          source: "deploy/*"
           target: ${{ secrets.DEPLOY_PATH }}
           rm: false
           overwrite: true
@@ -284,10 +269,6 @@ jobs:
             echo "=== Deployment ==="
             cd "${{ secrets.DEPLOY_PATH }}"
             ls -la
-            if [ "${{ needs.detect.outputs.node }}" = "true" ] || [ "${{ needs.detect.outputs.html }}" = "true" ]; then
-              echo "=== Built site (serve this folder for static hosting) ==="
-              ls -la dist || true
-            fi
 
             if [ "${{ needs.detect.outputs.python }}" = "true" ] && [ "${{ needs.detect.outputs.node }}" != "true" ] && [ "${{ needs.detect.outputs.html }}" != "true" ]; then
               if [ -f requirements.txt ]; then
