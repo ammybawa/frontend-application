@@ -27,7 +27,7 @@ interface Task {
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([
-    { id: '1', text: 'Plan the day', completed: true },
+    { id: '1', text: 'test done', completed: true },
     { id: '2', text: 'Review project goals', completed: false },
     { id: '3', text: 'Take a short walk', completed: false },
   ]);
