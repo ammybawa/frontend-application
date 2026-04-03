@@ -23,16 +23,20 @@ jobs:
       python: ${{ steps.detect.outputs.python }}
       node: ${{ steps.detect.outputs.node }}
       html: ${{ steps.detect.outputs.html }}
+      node_deploy: ${{ steps.detect.outputs.node_deploy }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Detect project type
         id: detect
+        env:
+          NODE_DEPLOY_MODE: ${{ vars.NODE_DEPLOY_MODE }}
         run: |
           echo "python=false" >> "$GITHUB_OUTPUT"
           echo "node=false" >> "$GITHUB_OUTPUT"
           echo "html=false" >> "$GITHUB_OUTPUT"
+          echo "node_deploy=" >> "$GITHUB_OUTPUT"
 
           if [ -f requirements.txt ] || [ -f pyproject.toml ] || [ -f Pipfile ] || [ -f setup.py ]; then
             echo "python=true" >> "$GITHUB_OUTPUT"
@@ -40,6 +44,15 @@ jobs:
 
           if [ -f package.json ]; then
             echo "node=true" >> "$GITHUB_OUTPUT"
+            if [ "$NODE_DEPLOY_MODE" = "pm2-server" ]; then
+              echo "node_deploy=pm2-server" >> "$GITHUB_OUTPUT"
+            elif [ "$NODE_DEPLOY_MODE" = "static" ]; then
+              echo "node_deploy=static" >> "$GITHUB_OUTPUT"
+            elif grep -qE '"vite"|"@vitejs/' package.json && grep -q 'vite build' package.json; then
+              echo "node_deploy=static" >> "$GITHUB_OUTPUT"
+            else
+              echo "node_deploy=pm2-server" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
           # Static HTML: any .html in repo root, and not a Node app (Node build handles those)
@@ -130,6 +143,7 @@ jobs:
           SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
 
       - name: Rebuild native modules (optional)
+        if: needs.detect.outputs.node_deploy == 'static'
         continue-on-error: true
         run: |
           if npm ls @tailwindcss/oxide >/dev/null 2>&1; then
@@ -138,11 +152,13 @@ jobs:
             echo "No @tailwindcss/oxide in tree, skipping rebuild"
           fi
 
-      - name: Run build (if script exists)
+      - name: Run production build (static sites)
+        if: needs.detect.outputs.node_deploy == 'static'
         run: npm run build --if-present
 
       - name: Resolve build output directory
         id: outdir
+        if: needs.detect.outputs.node_deploy == 'static'
         run: |
           if [ -d dist ]; then echo "dir=dist" >> "$GITHUB_OUTPUT"
           elif [ -d out ]; then echo "dir=out" >> "$GITHUB_OUTPUT"
@@ -150,12 +166,37 @@ jobs:
           else echo "dir=." >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload Node artifact
+      - name: Upload static build artifact
+        if: needs.detect.outputs.node_deploy == 'static'
         uses: actions/upload-artifact@v4
         with:
           name: node-build
           path: ${{ steps.outdir.outputs.dir }}/
           if-no-files-found: warn
+
+      - name: Stage app source for PM2 server deploy
+        if: needs.detect.outputs.node_deploy == 'pm2-server'
+        run: |
+          mkdir -p _node_pm2_staging
+          rsync -a \
+            --exclude node_modules \
+            --exclude .git \
+            --exclude .github \
+            --exclude dist \
+            --exclude out \
+            --exclude build \
+            --exclude .env \
+            --exclude '.env.*' \
+            --exclude _node_pm2_staging \
+            ./ _node_pm2_staging/
+
+      - name: Upload PM2 server artifact
+        if: needs.detect.outputs.node_deploy == 'pm2-server'
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-build
+          path: _node_pm2_staging/
+          if-no-files-found: error
 
   # ───────────────────────────────────────────
   # HTML JOB
@@ -277,6 +318,16 @@ jobs:
           command_timeout: 15m
           script: |
             set -e
+            # Non-interactive SSH uses a minimal PATH — Node/npm/pm2 are often missing (nvm, fnm, /usr/local, etc.)
+            EXTRA_PATH="${{ secrets.SSH_NODE_PATH }}"
+            export PATH="${EXTRA_PATH:+$EXTRA_PATH:}/usr/local/bin:/snap/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"
+            export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            if [ -x "$HOME/.local/share/fnm/fnm" ]; then
+              eval "$("$HOME/.local/share/fnm/fnm" env)"
+            fi
+            [ -f "$HOME/.profile" ] && . "$HOME/.profile" || true
+
             echo "=== Deployment ==="
             cd "${{ secrets.DEPLOY_PATH }}"
             ls -la
@@ -289,18 +340,39 @@ jobs:
               # sudo systemctl restart your-python-service
             fi
 
-            if [ "${{ needs.detect.outputs.node }}" = "true" ]; then
-              PM2_NAME="${{ secrets.PM2_APP_NAME }}"
+            PM2_NAME="${{ secrets.PM2_APP_NAME }}"
+            if [ "${{ needs.detect.outputs.node }}" = "true" ] && [ "${{ needs.detect.outputs.node_deploy }}" = "pm2-server" ]; then
+              echo "=== PM2 server deploy: install dependencies on host ==="
+              if ! command -v npm >/dev/null 2>&1; then
+                echo "::error::npm not in PATH. On the server run: which npm — then add repo secret SSH_NODE_PATH with that directory (e.g. /home/azureuser/.nvm/versions/node/v20.0.0/bin)."
+                exit 127
+              fi
+              npm ci --omit=dev 2>/dev/null || npm install --omit=dev --no-audit --no-fund
+              if [ -z "$PM2_NAME" ]; then
+                echo "::error::Set PM2_APP_NAME secret to your pm2 process name (see pm2 ls)"; exit 1
+              fi
+              if ! command -v pm2 >/dev/null 2>&1; then
+                echo "::error::pm2 not found in PATH on server"; exit 1
+              fi
+              if pm2 describe "$PM2_NAME" >/dev/null 2>&1; then
+                pm2 restart "$PM2_NAME"
+                pm2 save || true
+                echo "PM2 restarted: $PM2_NAME"
+              else
+                echo "::warning::PM2 app '$PM2_NAME' not found. Dependencies are installed; create the app once on the server (e.g. pm2 start app.js --name $PM2_NAME), then re-run deploy."
+              fi
+            fi
+
+            if [ "${{ needs.detect.outputs.node }}" = "true" ] && [ "${{ needs.detect.outputs.node_deploy }}" = "static" ]; then
               if [ -n "$PM2_NAME" ]; then
                 if command -v pm2 >/dev/null 2>&1; then
-                  pm2 restart "$PM2_NAME"
-                  pm2 save || true
-                  echo "PM2 restarted: $PM2_NAME"
+                  pm2 restart "$PM2_NAME" && pm2 save || true
+                  echo "PM2 restarted (static assets): $PM2_NAME"
                 else
-                  echo "PM2_APP_NAME is set but pm2 not found in PATH"; exit 1
+                  echo "PM2_APP_NAME set but pm2 not in PATH"; exit 1
                 fi
               else
-                echo "PM2_APP_NAME secret empty — skipping PM2 (set it to your process name from pm2 list)"
+                echo "Static deploy — PM2_APP_NAME not set, skipping PM2"
               fi
             fi
 
