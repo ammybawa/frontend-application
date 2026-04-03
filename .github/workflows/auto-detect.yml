@@ -199,31 +199,32 @@ jobs:
       )
     runs-on: ubuntu-latest
     steps:
+      # Use dist/ here to match Vite output name; do not use "deploy" or SCP will create deploy/ on the server
       - name: Download Node artifact
         if: needs.detect.outputs.node == 'true'
         uses: actions/download-artifact@v4
         with:
           name: node-build
-          path: deploy/
+          path: dist/
 
       - name: Download HTML artifact
         if: needs.detect.outputs.html == 'true' && needs.detect.outputs.node != 'true'
         uses: actions/download-artifact@v4
         with:
           name: html-build
-          path: deploy/
+          path: dist/
 
       - name: Download Python artifact
         if: needs.detect.outputs.python == 'true' && needs.detect.outputs.node != 'true' && needs.detect.outputs.html != 'true'
         uses: actions/download-artifact@v4
         with:
           name: python-build
-          path: deploy/
+          path: dist/
 
       - name: Verify deploy files
         run: |
           echo "=== Files to deploy ==="
-          ls -laR deploy/ || true
+          ls -laR dist/ || true
 
       - name: Copy files to server (Node / HTML static)
         if: needs.detect.outputs.node == 'true' || needs.detect.outputs.html == 'true'
@@ -235,9 +236,9 @@ jobs:
           port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
           timeout: 2m
           command_timeout: 15m
-          source: "deploy/*"
+          source: "dist/*"
           target: ${{ secrets.DEPLOY_PATH }}
-          # rm: true fails if this user cannot delete the folder (e.g. owned by root/www-data)
+          strip_components: 1
           rm: false
           overwrite: true
 
@@ -251,7 +252,7 @@ jobs:
           port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
           timeout: 2m
           command_timeout: 15m
-          source: "deploy/*"
+          source: "dist/*"
           target: ${{ secrets.DEPLOY_PATH }}
           rm: false
           overwrite: true
