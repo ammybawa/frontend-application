@@ -108,11 +108,16 @@ jobs:
       - name: Stage Python artifact for deploy
         run: |
           mkdir -p _python_staging
-          find . \( -path ./.git -o -path ./_python_staging \) -prune -o \
+          find . \
+            \( -path ./.git -o -path ./_python_staging -o -path ./venv -o -path ./.venv \) -prune -o \
+            -type d \( -name __pycache__ -o -name .pytest_cache \) -prune -o \
             \( -name "*.py" -o -name "requirements.txt" -o -name "pyproject.toml" -o -name "Pipfile" -o -name "Pipfile.lock" \) -print0 |
             while IFS= read -r -d '' f; do
               install -D "$f" "_python_staging/$f"
             done
+          if [ -d templates ]; then
+            rsync -a templates/ _python_staging/templates/
+          fi
 
       - name: Upload Python artifact
         uses: actions/upload-artifact@v4
@@ -245,34 +250,34 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-build
-          path: deploy/
+          path: _artifact/
 
       - name: Download HTML artifact
         if: needs.detect.outputs.html == 'true' && needs.detect.outputs.node != 'true'
         uses: actions/download-artifact@v4
         with:
           name: html-build
-          path: deploy/
+          path: _artifact/
 
       - name: Download Python artifact
         if: needs.detect.outputs.python == 'true' && needs.detect.outputs.node != 'true' && needs.detect.outputs.html != 'true'
         uses: actions/download-artifact@v4
         with:
           name: python-build
-          path: deploy/
+          path: _artifact/
 
-      - name: Verify deploy files
+      - name: Verify files to upload
         run: |
-          echo "=== Files to deploy ==="
-          ls -laR deploy/ 2>/dev/null || true
+          echo "=== Staged for SCP (_artifact/) ==="
+          ls -laR _artifact/ 2>/dev/null || true
 
-      - name: Ensure deploy/ is not empty before SCP
+      - name: Ensure upload staging is not empty
         if: |
           needs.detect.outputs.node == 'true' || needs.detect.outputs.html == 'true' ||
           (needs.detect.outputs.python == 'true' && needs.detect.outputs.node != 'true' && needs.detect.outputs.html != 'true')
         run: |
-          if [ ! -d deploy ] || [ -z "$(ls -A deploy 2>/dev/null)" ]; then
-            echo "::error::deploy/ is missing or empty (nothing to upload). Check build output and artifact download path."
+          if [ ! -d _artifact ] || [ -z "$(ls -A _artifact 2>/dev/null)" ]; then
+            echo "::error::_artifact/ is missing or empty (nothing to upload). Check build output and artifact download path."
             ls -la
             exit 1
           fi
@@ -287,8 +292,9 @@ jobs:
           port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
           timeout: 2m
           command_timeout: 15m
-          source: "deploy/*"
+          source: "_artifact/*"
           target: ${{ secrets.DEPLOY_PATH }}
+          strip_components: 1
           rm: false
           overwrite: true
 
@@ -302,8 +308,9 @@ jobs:
           port: ${{ secrets.SSH_PORT != '' && secrets.SSH_PORT || '22' }}
           timeout: 2m
           command_timeout: 15m
-          source: "deploy/*"
+          source: "_artifact/*"
           target: ${{ secrets.DEPLOY_PATH }}
+          strip_components: 1
           rm: false
           overwrite: true
 
@@ -334,10 +341,23 @@ jobs:
 
             if [ "${{ needs.detect.outputs.python }}" = "true" ] && [ "${{ needs.detect.outputs.node }}" != "true" ] && [ "${{ needs.detect.outputs.html }}" != "true" ]; then
               if [ -f requirements.txt ]; then
-                python3 -m pip install --user -r requirements.txt || pip3 install -r requirements.txt
+                echo "=== Python: install into project venv (PEP 668 blocks system pip on Debian/Ubuntu) ==="
+                if [ ! -d venv ]; then
+                  python3 -m venv venv
+                fi
+                ./venv/bin/python -m pip install --upgrade pip
+                ./venv/bin/pip install -r requirements.txt
+              else
+                echo "No requirements.txt — skipping venv pip install"
               fi
-              # Uncomment if you run the app under systemd/pm2/gunicorn:
-              # sudo systemctl restart your-python-service
+              PY_SVC="${{ secrets.PYTHON_SYSTEMD_SERVICE }}"
+              if [ -n "$PY_SVC" ]; then
+                echo "=== Restart systemd: $PY_SVC ==="
+                sudo systemctl restart "$PY_SVC"
+                sudo systemctl is-active --quiet "$PY_SVC" || { echo "::error::Service $PY_SVC is not active after restart"; exit 1; }
+              else
+                echo "PYTHON_SYSTEMD_SERVICE secret not set — skipping systemctl restart"
+              fi
             fi
 
             PM2_NAME="${{ secrets.PM2_APP_NAME }}"
@@ -382,4 +402,3 @@ jobs:
             fi
 
             echo "=== Done ==="
-
